@@ -1,11 +1,18 @@
 import java.io.*;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
+
+// Custom Exception for Unavailable Books
+class BookNotAvailableException extends Exception {
+    public BookNotAvailableException(String message) {
+        super(message);
+    }
+}
 
 // Book class representing a library book
 class Book {
-    private final String title;
+    private String title;
     private boolean available;
 
     public Book(String title, boolean available) {
@@ -21,7 +28,10 @@ class Book {
         return available;
     }
 
-    public synchronized void borrow() {
+    public synchronized void borrow() throws BookNotAvailableException {
+        if (!available) {
+            throw new BookNotAvailableException("Book '" + title + "' is currently not available.");
+        }
         available = false;
     }
 
@@ -29,37 +39,32 @@ class Book {
         available = true;
     }
 
-    @Override
-    public String toString() {
+    // Convert Book to CSV format
+    public String toCSV() {
         return title + "," + available;
     }
 
-    public static Book fromString(String line) {
+    // Create a Book object from a CSV line
+    public static Book fromCSV(String line) {
         String[] parts = line.split(",");
-        return new Book(parts[0], Boolean.parseBoolean(parts[1]));
+        return new Book(parts[0].trim(), Boolean.parseBoolean(parts[1].trim()));
     }
 }
 
-// Custom exception for unavailable books
-class BookNotAvailableException extends Exception {
-    public BookNotAvailableException(String message) {
-        super(message);
-    }
-}
-
-// Library class to manage books
+// Library class to manage books using CSV file
 class Library {
-    private final List<Book> books;
-    private final String FILE_NAME = "books.txt";
+    private final List<Book> books = new ArrayList<>();
+    private final String CSV_FILE = "books.csv";
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     public Library() {
-        books = loadBooks();
+        books.addAll(loadBooks());
         if (books.isEmpty()) {
             addDefaultBooks();
         }
     }
 
+    // Add default books when CSV is empty
     private void addDefaultBooks() {
         books.addAll(Arrays.asList(
                 new Book("Game of Thrones", true),
@@ -69,24 +74,23 @@ class Library {
         saveBooks();
     }
 
+    // Load books from CSV file
     private List<Book> loadBooks() {
         List<Book> bookList = new ArrayList<>();
-        try (BufferedReader reader = new BufferedReader(new FileReader(FILE_NAME))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                bookList.add(Book.fromString(line));
-            }
+        try (BufferedReader reader = new BufferedReader(new FileReader(CSV_FILE))) {
+            bookList = reader.lines().map(Book::fromCSV).collect(Collectors.toList());
         } catch (IOException e) {
-            System.out.println("No existing book data found. Creating a new File Library.");
+            System.out.println("No existing book data found. Creating a new CSV Library.");
         }
         return bookList;
     }
 
+    // Save books to CSV file asynchronously
     private void saveBooks() {
         executor.submit(() -> {
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(FILE_NAME))) {
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(CSV_FILE))) {
                 for (Book book : books) {
-                    writer.write(book.toString());
+                    writer.write(book.toCSV());
                     writer.newLine();
                 }
             } catch (IOException e) {
@@ -110,15 +114,20 @@ class Library {
 
     public void borrowBook(String title) {
         for (Book book : books) {
-            if (book.getTitle().equalsIgnoreCase(title) && book.isAvailable()) {
-                book.borrow();
-                saveBooks();
-                System.out.println("You borrowed: " + title);
-                displayAvailableBooks();
-                return;
+            if (book.getTitle().equalsIgnoreCase(title)) {
+                try {
+                    book.borrow();
+                    saveBooks();
+                    System.out.println("You borrowed: " + title);
+                    displayAvailableBooks();
+                    return;
+                } catch (BookNotAvailableException e) {
+                    System.out.println(e.getMessage()); // Show error if book is unavailable
+                    return;
+                }
             }
         }
-        System.out.println("Book not available.");
+        System.out.println("Book not found in the library.");
     }
 
     public void returnBook(String title) {
@@ -135,12 +144,12 @@ class Library {
     }
 
     public void displayAvailableBooks() {
-        System.out.println("Available Books:");
-        for (Book book : books) {
-            if (book.isAvailable()) {
-                System.out.println("- " + book.getTitle());
-            }
-        }
+        System.out.println("\nLibrary Books");
+        System.out.println("------------------------");
+        books.forEach(book -> {
+            String status = book.isAvailable() ? "Available" : "Borrowed";
+            System.out.println(book.getTitle() + " - " + status);
+        });
     }
 
     public void shutdown() {
@@ -186,11 +195,11 @@ public class LibraryManagementSystem {
                 }
                 case 5 -> {
                     library.shutdown();
-                    System.out.println("Exiting...");
+                    System.out.println("Exiting Library System...");
                     scanner.close();
                     return;
                 }
-                default -> System.out.println("Invalid option.");
+                default -> System.out.println("Invalid option. \n");
             }
         }
     }
